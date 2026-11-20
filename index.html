@@ -6,12 +6,12 @@
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
 </head><body>
 <div id="overlay"><div id="toolbar"><button id="place">Placer</button><button id="calibrate" class="secondary">Caler sol</button><button id="floorDown" class="secondary">Sol −10 cm</button><button id="floorUp" class="secondary">Sol +10 cm</button><button id="rotateLeft" class="secondary">↶ 15°</button><button id="rotateRight" class="secondary">↷ 15°</button><button id="undo" class="secondary">Annuler</button></div></div>
-<section id="panel"><h1>📦 Volume XR <small id="version" style="font-size:13px;color:#6cebd3">v0.4.0</small></h1><p>Volumes à l’échelle réelle dans ton Quest 3.</p><div class="grid">
+<section id="panel"><h1>📦 Volume XR <small id="version" style="font-size:13px;color:#6cebd3">v0.5.0</small></h1><p>Volumes à l’échelle réelle dans ton Quest 3.</p><div class="grid">
 <div><label for="w">Largeur (cm)</label><input type="number" id="w" value="80" min="1" max="1000"></div>
 <div><label for="d">Profondeur (cm)</label><input type="number" id="d" value="60" min="1" max="1000"></div>
 <div><label for="h">Hauteur (cm)</label><input type="number" id="h" value="180" min="1" max="1000"></div></div>
 <button id="preset" class="secondary">Carton 60 × 40 × 40</button><button id="clear" class="secondary">Effacer tout</button>
-<p>Dans le casque : « Start AR », vise le sol avec un contrôleur et appuie sur la gâchette. Gâchette INDEX : viser et saisir une caisse pour la déplacer, relâcher pour la poser ; viser le vide et appuyer pour créer une caisse. GRIP : maintenir pour tourner la caisse sélectionnée avec la manette. Stick horizontal : rotation fine. Caler sol : poser le contrôleur au sol, puis appuyer sur « Caler sol » ou le bouton A/X. Le sol n’est pas détecté automatiquement.</p><p id="status" role="status">Chargement…</p></section>
+<p>Dans le casque : « Start AR », vise le sol avec un contrôleur et appuie sur la gâchette. INDEX : viser une caisse et maintenir pour la déplacer librement en X/Y/Z ; relâcher pour la laisser en hauteur. INDEX dans le vide : créer une caisse. GRIP : saisir son orientation et tourner librement sur les 3 axes. Joystick : rotation sur Y. A/X : caler le sol manuellement. Les boutons sont rappelés dans un panneau 3D dans le casque.</p><p id="status" role="status">Chargement…</p></section>
 <script type="module">
 import * as THREE from 'three';
 import {ARButton} from 'three/addons/webxr/ARButton.js';
@@ -37,35 +37,50 @@ $('undo').addEventListener('click',undo);$('clear').addEventListener('click',()=
 const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0),hit=new THREE.Vector3(),current=new THREE.Vector3(),tempPos=new THREE.Vector3(),tempQuat=new THREE.Quaternion();
 const marker=new THREE.Mesh(new THREE.RingGeometry(.08,.10,32),new THREE.MeshBasicMaterial({color:0xffdc7b,side:THREE.DoubleSide}));marker.rotation.x=-Math.PI/2;scene.add(marker);marker.visible=false;
 const guide=new THREE.GridHelper(2,10,0x65ffe0,0x3b806c);scene.add(guide);guide.visible=false;
-function setFloor(y){if(!Number.isFinite(y))return;const previous=floorY;floorY=THREE.MathUtils.clamp(y,-3,3);plane.constant=-floorY;for(const o of objects)o.position.y+=floorY-previous;status.textContent='Plan du sol : '+Math.round(floorY*100)+' cm. Il faut le calibrer au sol réel.';}
+function setFloor(y){if(!Number.isFinite(y))return;floorY=THREE.MathUtils.clamp(y,-3,3);plane.constant=-floorY;/* Ne pas déplacer les objets déjà posés lorsque le niveau du sol change. */status.textContent='Plan du sol : '+Math.round(floorY*100)+' cm. Il faut le calibrer au sol réel.';}
 function calibrate(c){const controller=c||lastController||inputs.find(i=>i.source)?.controller;if(!controller){status.textContent='Aucune manette détectée.';return;}controller.updateMatrixWorld(true);controller.getWorldPosition(tempPos);setFloor(tempPos.y);status.textContent='Sol calibré à '+Math.round(floorY*100)+' cm depuis la manette.';}
 function controllerRay(c){c.updateMatrixWorld(true);c.getWorldPosition(ray.ray.origin);c.getWorldQuaternion(tempQuat);ray.ray.direction.set(0,0,-1).applyQuaternion(tempQuat).normalize();}
 function groundAt(c){if(!c)return null;controllerRay(c);if(ray.ray.direction.y>=-.02)return null;const point=new THREE.Vector3();if(!ray.ray.intersectPlane(plane,point))return null;if(point.distanceTo(ray.ray.origin)>8)return null;return point;}
 function aimedObject(c){if(!c)return null;controllerRay(c);let nearest=null,dist=Infinity;for(const o of objects){const mesh=o.children.find(n=>n.isMesh);if(!mesh)continue;const h=ray.intersectObject(mesh,false);if(h.length&&h[0].distance<dist&&h[0].distance<8){nearest=o;dist=h[0].distance;}}return nearest;}
 function target(){for(const input of inputs){if(!input.source)continue;const p=groundAt(input.controller);if(p){lastController=input.controller;return p;}}camera.getWorldPosition(tempPos);const d=new THREE.Vector3();camera.getWorldDirection(d);d.y=0;if(d.lengthSq()<.01)d.set(0,0,-1);return tempPos.clone().addScaledVector(d.normalize(),1.5).setY(floorY);}
 function place(){if(!active||!dimensions())return;const o=new THREE.Group();build(o,true);o.position.copy(current);scene.add(o);objects.push(o);highlight(o);status.textContent=objects.length+' volume(s) placé(s).';}
-function beginTrigger(c){const o=aimedObject(c);if(!o){place();return;}highlight(o);const p=groundAt(c);drag={controller:c,object:o,offset:p?o.position.clone().sub(p):new THREE.Vector3()};}
-function endTrigger(c){if(drag?.controller===c){drag.object.position.y=floorY;drag=null;}}
-function beginGrip(c){const o=aimedObject(c)||selected;if(!o)return;highlight(o);c.getWorldQuaternion(tempQuat);const euler=new THREE.Euler().setFromQuaternion(tempQuat,'YXZ');rotateGrab={controller:c,object:o,startYaw:euler.y,startAngle:o.rotation.y};}
+function beginTrigger(c){const o=aimedObject(c);if(!o){place();return;}highlight(o);c.updateMatrixWorld(true);const p=new THREE.Vector3(),q=new THREE.Quaternion();c.getWorldPosition(p);c.getWorldQuaternion(q);drag={controller:c,object:o,startPosition:p,startQuaternion:q,startObjectPosition:o.position.clone(),startObjectQuaternion:o.quaternion.clone()};}
+function endTrigger(c){if(drag?.controller===c)drag=null;}
+function beginGrip(c){const o=aimedObject(c)||selected;if(!o)return;highlight(o);c.updateMatrixWorld(true);const q=new THREE.Quaternion();c.getWorldQuaternion(q);rotateGrab={controller:c,object:o,startQuaternion:q,startObjectQuaternion:o.quaternion.clone()};}
 function endGrip(c){if(rotateGrab?.controller===c)rotateGrab=null;}
 function turn(angle){if(selected)selected.rotation.y+=angle;}
 $('rotateLeft').addEventListener('click',()=>turn(Math.PI/12));$('rotateRight').addEventListener('click',()=>turn(-Math.PI/12));
 $('place').addEventListener('click',place);$('calibrate').addEventListener('click',()=>calibrate());
 $('floorDown').addEventListener('click',()=>setFloor(floorY-.1));$('floorUp').addEventListener('click',()=>setFloor(floorY+.1));
 document.body.appendChild(ARButton.createButton(renderer,{optionalFeatures:['dom-overlay'],domOverlay:{root:$('overlay')}}));
-renderer.xr.addEventListener('sessionstart',()=>{active=true;ghost.visible=true;marker.visible=true;guide.visible=true;$('panel').style.display='none';$('toolbar').style.display='flex';});
-renderer.xr.addEventListener('sessionend',()=>{active=false;ghost.visible=false;marker.visible=false;guide.visible=false;$('panel').style.display='block';$('toolbar').style.display='none';drag=null;rotateGrab=null;});
+renderer.xr.addEventListener('sessionstart',()=>{active=true;ghost.visible=true;marker.visible=true;guide.visible=true;hud.visible=true;$('panel').style.display='none';$('toolbar').style.display='flex';});
+renderer.xr.addEventListener('sessionend',()=>{active=false;ghost.visible=false;marker.visible=false;guide.visible=false;hud.visible=false;$('panel').style.display='block';$('toolbar').style.display='none';drag=null;rotateGrab=null;});
+
+const hudCanvas=document.createElement('canvas');hudCanvas.width=1024;hudCanvas.height=480;
+const hudCtx=hudCanvas.getContext('2d');
+hudCtx.fillStyle='rgba(8,24,34,.88)';hudCtx.fillRect(0,0,1024,480);
+hudCtx.fillStyle='#6cf2d6';hudCtx.font='bold 48px sans-serif';hudCtx.fillText('VOLUME XR  v0.5.0',42,68);
+hudCtx.fillStyle='#ffffff';hudCtx.font='34px sans-serif';
+const instructions=['INDEX  maintenir : déplacer X / Y / Z','INDEX  vide : créer une caisse','GRIP  maintenir : rotation 3 axes','STICK  gauche / droite : rotation Y','A / X  : calibrer le niveau du sol','Relâcher : garder la position 3D'];
+instructions.forEach((line,i)=>hudCtx.fillText(line,42,125+i*54));
+const hudTexture=new THREE.CanvasTexture(hudCanvas);
+const hud=new THREE.Mesh(new THREE.PlaneGeometry(.94,.44),new THREE.MeshBasicMaterial({map:hudTexture,transparent:true,depthTest:false}));
+hud.renderOrder=1000;hud.visible=false;scene.add(hud);
+const hudCameraPos=new THREE.Vector3(),hudCameraQuat=new THREE.Quaternion();
 let lastStick=0;
 function pollControllers(){const now=performance.now();for(const input of inputs){if(!input.source)continue;const pad=input.source.gamepad;if(!pad)continue;const buttons=pad.buttons||[];const t=(buttons[0]?.value||0)>.55,g=(buttons[1]?.value||0)>.55,cal=Boolean(buttons[4]?.pressed||buttons[5]?.pressed);
 if(t&&!input.trigger)beginTrigger(input.controller);if(!t&&input.trigger)endTrigger(input.controller);input.trigger=t;
 if(g&&!input.grip)beginGrip(input.controller);if(!g&&input.grip)endGrip(input.controller);input.grip=g;
 if(cal&&!input.cal)calibrate(input.controller);input.cal=cal;
-const axes=pad.axes||[];const horizontal=axes.length>=4?axes[2]:axes[0];if(selected&&Math.abs(horizontal||0)>.65&&now-lastStick>140){turn(Math.sign(horizontal)*-.10);lastStick=now;}
+const axes=pad.axes||[];const horizontal=axes.length>=4?axes[2]:axes[0];if(selected&&!rotateGrab&&Math.abs(horizontal||0)>.65&&now-lastStick>140){turn(Math.sign(horizontal)*-.10);lastStick=now;}
 }}
 renderer.setAnimationLoop(()=>{if(active){pollControllers();current.copy(target());ghost.position.copy(current);marker.position.copy(current);marker.position.y+=.005;guide.position.copy(current);
-if(drag){const p=groundAt(drag.controller);if(p){drag.object.position.copy(p.add(drag.offset));drag.object.position.y=floorY;}}
-if(rotateGrab){rotateGrab.controller.getWorldQuaternion(tempQuat);const euler=new THREE.Euler().setFromQuaternion(tempQuat,'YXZ');rotateGrab.object.rotation.y=rotateGrab.startAngle+(euler.y-rotateGrab.startYaw);}
+if(drag){const p=new THREE.Vector3(),q=new THREE.Quaternion();drag.controller.getWorldPosition(p);drag.controller.getWorldQuaternion(q);const delta=q.clone().multiply(drag.startQuaternion.clone().invert());const offset=drag.startObjectPosition.clone().sub(drag.startPosition).applyQuaternion(delta);drag.object.position.copy(p.add(offset));}
+if(rotateGrab){rotateGrab.controller.getWorldQuaternion(tempQuat);const delta=tempQuat.clone().multiply(rotateGrab.startQuaternion.clone().invert());rotateGrab.object.quaternion.copy(delta.multiply(rotateGrab.startObjectQuaternion));}
+camera.getWorldPosition(hudCameraPos);camera.getWorldQuaternion(hudCameraQuat);
+hud.position.copy(hudCameraPos).add(new THREE.Vector3(-.28,.21,-1.15).applyQuaternion(hudCameraQuat));
+hud.quaternion.copy(hudCameraQuat);
 }renderer.render(scene,camera);});
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
-status.textContent='v0.4.0 — manettes : gâchette saisir, grip tourner, A/X caler le sol.';
+status.textContent='v0.5.0 — manettes : gâchette saisir, grip tourner, A/X caler le sol.';
 </script></body></html>
